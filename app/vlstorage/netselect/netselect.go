@@ -428,7 +428,7 @@ func (s *Storage) RunQuery(qctx *logstorage.QueryContext, writeBlock logstorage.
 	}
 
 	concurrency := qctx.Query.GetConcurrency()
-	return nqr.Run(qctx.Context, concurrency, search)
+	return nqr.Run(concurrency, search)
 }
 
 func (s *Storage) runQuery(stopCh <-chan struct{}, qctx *logstorage.QueryContext, writeBlock logstorage.WriteDataBlockFunc) error {

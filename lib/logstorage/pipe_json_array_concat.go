@@ -67,10 +67,11 @@ func (pc *pipeJSONArrayConcat) visitSubqueries(_ func(q *Query)) {
 	// nothing to do
 }
 
-func (pc *pipeJSONArrayConcat) newPipeProcessor(_ int, _ <-chan struct{}, _ func(), ppNext pipeProcessor) pipeProcessor {
+func (pc *pipeJSONArrayConcat) newPipeProcessor(_ int, _ <-chan struct{}, cancel func(error), ppNext pipeProcessor) pipeProcessor {
 	pcp := &pipeJSONArrayConcatProcessor{
 		pc:     pc,
 		ppNext: ppNext,
+		cancel: cancel,
 	}
 	pcp.shards.Init = func(shard *pipeJSONArrayConcatProcessorShard) {
 		shard.reset()
@@ -83,6 +84,7 @@ type pipeJSONArrayConcatProcessor struct {
 	ppNext pipeProcessor
 
 	shards atomicutil.Slice[pipeJSONArrayConcatProcessorShard]
+	cancel func(error)
 }
 
 func (pcp *pipeJSONArrayConcatProcessor) writeBlock(workerID uint, br *blockResult) {
@@ -103,7 +105,11 @@ func (pcp *pipeJSONArrayConcatProcessor) writeBlock(workerID uint, br *blockResu
 		br.addResultColumnConst(shard.rc)
 	} else {
 		// Slow path for other columns
-		values := c.getValues(br)
+		values, err := c.getValues(br)
+		if err != nil {
+			pcp.cancel(err)
+			return
+		}
 		prevOut := ""
 		for rowIdx := range values {
 			if rowIdx == 0 || values[rowIdx] != values[rowIdx-1] {
@@ -146,9 +152,7 @@ func (shard *pipeJSONArrayConcatProcessorShard) concat(arrayStr, delimiter strin
 	return bytesutil.ToUnsafeString(shard.a.b[bLen:])
 }
 
-func (pcp *pipeJSONArrayConcatProcessor) flush() error {
-	return nil
-}
+func (pcp *pipeJSONArrayConcatProcessor) flush() {}
 
 func parsePipeJSONArrayConcat(lex *lexer) (pipe, error) {
 	if !lex.isKeyword("json_array_concat") {

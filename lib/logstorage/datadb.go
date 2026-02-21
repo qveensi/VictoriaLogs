@@ -16,6 +16,7 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/fs"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/memory"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/objectstorage/common"
 	"github.com/VictoriaMetrics/metrics"
 )
 
@@ -166,8 +167,8 @@ func mustCreateDatadb(path string) {
 	fs.MustSyncPathAndParentDir(path)
 }
 
-// mustOpenDatadb opens datadb at the given path with the given flushInterval for in-memory data.
-func mustOpenDatadb(pt *partition, path string, flushInterval time.Duration) *datadb {
+// mustOpenLocalDatadb opens datadb at the given path with the given flushInterval for in-memory data.
+func mustOpenLocalDatadb(pt *partition, path string, flushInterval time.Duration) *datadb {
 	partNames := mustReadPartNames(path)
 	mustRemoveUnusedDirs(path, partNames)
 
@@ -216,6 +217,63 @@ func mustOpenDatadb(pt *partition, path string, flushInterval time.Duration) *da
 	ddb.startBackgroundWorkers()
 
 	return ddb
+}
+
+// openRemoteDatadb opens datadb at the given path with the given flushInterval for in-memory data.
+func openRemoteDatadb(pt *partition, path string) (*datadb, error) {
+	sc := pt.s.sc
+	allDataFiles, err := sc.ListFiles(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list data files at %q: %w", sc.GetPath(path), err)
+	}
+
+	partsFile := filepath.Join(path, partsFilename)
+	partsSize, ok := allDataFiles[partsFilename]
+	if !ok {
+		logger.Panicf("FATAL: cannot find data file %q", sc.GetPath(partsFile))
+	}
+
+	bb := common.GetWriteAtBuffer()
+	defer common.PutWriteAtBuffer(bb)
+	bb.Grow(int(partsSize))
+	bb.B = bb.B[:int(partsSize)]
+	if err := sc.ReadFile(partsFile, bb); err != nil {
+		return nil, fmt.Errorf("cannot read data parts file %q: %w", sc.GetPath(partsFile), err)
+	}
+	var partNames []string
+	if err := json.Unmarshal(bb.B, &partNames); err != nil {
+		logger.Panicf("FATAL: cannot parse %q: %s", sc.GetPath(partsFile), err)
+	}
+
+	var smallParts []*partWrapper
+	var bigParts []*partWrapper
+	for _, partName := range partNames {
+		p, err := openRemotePart(pt, allDataFiles, path, partName)
+		if err != nil {
+			for _, pw := range smallParts {
+				mustClosePart(pw.p)
+			}
+			for _, pw := range bigParts {
+				mustClosePart(pw.p)
+			}
+			return nil, err
+		}
+		pw := newPartWrapper(p, nil, time.Time{})
+		if p.ph.CompressedSizeBytes > getMaxInmemoryPartSize() {
+			bigParts = append(bigParts, pw)
+		} else {
+			smallParts = append(smallParts, pw)
+		}
+	}
+
+	ddb := &datadb{
+		pt:         pt,
+		path:       path,
+		smallParts: smallParts,
+		bigParts:   bigParts,
+		stopCh:     make(chan struct{}),
+	}
+	return ddb, nil
 }
 
 func (ddb *datadb) startBackgroundWorkers() {
@@ -1225,6 +1283,23 @@ func needStop(stopCh <-chan struct{}) bool {
 	}
 }
 
+// stopBackgroundWorkers signals background workers to stop.
+func (ddb *datadb) stopBackgroundWorkers() {
+	ddb.partsLock.Lock()
+	select {
+	case <-ddb.stopCh:
+	default:
+		close(ddb.stopCh)
+	}
+	ddb.partsLock.Unlock()
+}
+
+// drainBackgroundWorkers stops background workers and waits for them to finish.
+func (ddb *datadb) drainBackgroundWorkers() {
+	ddb.stopBackgroundWorkers()
+	ddb.wg.Wait()
+}
+
 // mustCloseDatadb can be called only when nobody accesses ddb.
 func mustCloseDatadb(ddb *datadb) {
 	// Flush ddb.rb for the last time
@@ -1233,9 +1308,7 @@ func mustCloseDatadb(ddb *datadb) {
 	// Notify background workers to stop.
 	// Make it under ddb.partsLock in order to prevent from calling ddb.wg.Add()
 	// after ddb.stopCh is closed and ddb.wg.Wait() is called.
-	ddb.partsLock.Lock()
-	close(ddb.stopCh)
-	ddb.partsLock.Unlock()
+	ddb.stopBackgroundWorkers()
 
 	// Wait for background workers to stop.
 	ddb.wg.Wait()
@@ -1486,7 +1559,7 @@ func (ddb *datadb) mustForceMergeAllParts() {
 		bigPartsConcurrencyCh <- struct{}{}
 
 		wg.Go(func() {
-			ddb.mustMergeParts(pwsToMerge, false)
+			ddb.mustMergeParts(pwsToMerge, true)
 			<-bigPartsConcurrencyCh
 		})
 
@@ -1496,7 +1569,7 @@ func (ddb *datadb) mustForceMergeAllParts() {
 	putWaitGroup(wg)
 }
 
-func (ddb *datadb) deleteRows(pso *partitionSearchOptions, stopCh <-chan struct{}) bool {
+func (ddb *datadb) deleteRows(pso *partitionSearchOptions, cancel func(error), stopCh <-chan struct{}) bool {
 	// Get all the parts and make sure they are kept open.
 	pws, pwsDecRef := ddb.getPartsForTimeRange(pso.minTimestamp, pso.maxTimestamp)
 	defer pwsDecRef()
@@ -1505,7 +1578,7 @@ func (ddb *datadb) deleteRows(pso *partitionSearchOptions, stopCh <-chan struct{
 	var pwsToMerge []*partWrapper
 	needRepeat := false
 	for _, pw := range pws {
-		if !pw.p.hasMatchingRows(pso, stopCh) {
+		if !pw.p.hasMatchingRows(pso, cancel, stopCh) {
 			continue
 		}
 
