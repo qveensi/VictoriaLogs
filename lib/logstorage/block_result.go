@@ -269,6 +269,7 @@ func (br *blockResult) mustInitFromRows(rows [][]Field) {
 		fields := rows[0]
 		for i := range fields {
 			name := br.addValue(fields[i].Name)
+			name = getCanonicalColumnName(name)
 
 			valuesBufLen := len(br.valuesBuf)
 			for _, row := range rows {
@@ -290,6 +291,7 @@ func (br *blockResult) mustInitFromRows(rows [][]Field) {
 	for _, fields := range rows {
 		for j := range fields {
 			name := br.addValue(fields[j].Name)
+			name = getCanonicalColumnName(name)
 			if _, ok := columnIdxs[name]; !ok {
 				columnIdxs[name] = len(columnIdxs)
 			}

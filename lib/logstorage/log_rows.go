@@ -227,7 +227,10 @@ var lrPool sync.Pool
 // ForEachRow calls callback for every row stored in the lr.
 func (lr *LogRows) ForEachRow(callback func(streamHash uint64, r *InsertRow)) {
 	r := GetInsertRow()
-	for i, timestamp := range lr.timestamps {
+
+	// Copy timestamps to make sure we'll not process newly added []InsertRow during callback call.
+	timestamps := lr.timestamps
+	for i, timestamp := range timestamps {
 		sid := &lr.streamIDs[i]
 
 		streamHash := sid.id.lo ^ sid.id.hi

@@ -1809,6 +1809,27 @@ func ParseStatsQuery(s string, timestamp int64) (*Query, error) {
 	return q, nil
 }
 
+func ParsePipes(s string) (*Query, error) {
+	lex := newLexer(s, time.Now().UnixNano())
+
+	pipes, err := parsePipes(lex)
+	if err != nil {
+		return nil, err
+	}
+	if !lex.isEnd() {
+		return nil, fmt.Errorf("unexpected unparsed tail; context: [%s]; tail: [%s]", lex.context(), lex.rawToken+lex.s)
+	}
+
+	q := &Query{
+		f:         &filterNoop{},
+		pipes:     pipes,
+		timestamp: lex.currentTimestamp,
+	}
+	q.optimize()
+	q.initStatsRateFuncsFromTimeFilter()
+	return q, nil
+}
+
 // HasGlobalTimeFilter returns true when query contains a global time filter.
 func (q *Query) HasGlobalTimeFilter() bool {
 	start, end := q.GetFilterTimeRange()
@@ -3735,6 +3756,70 @@ func (q *Query) isStarQuery() bool {
 	default:
 		return false
 	}
+}
+
+func ApplyQueryToRows(q *Query, dst, src *LogRows) {
+	src.ForEachRow(func(_ uint64, srcRow *InsertRow) {
+		if q.f != nil && !q.f.matchRow(srcRow.Fields) {
+			return
+		}
+
+		br := &blockResult{}
+		br.mustInitFromRows([][]Field{srcRow.Fields})
+		br.timestampsBuf = src.timestamps
+
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+
+		writeFinalBlock := func(_ uint, br *blockResult) {
+			dstRow := GetInsertRow()
+			defer PutInsertRow(dstRow)
+
+			cs := br.getColumns()
+			for rowIdx := range br.rowsLen {
+				dstRow.Reset()
+
+				dstRow.TenantID = srcRow.TenantID
+				dstRow.StreamTagsCanonical = srcRow.StreamTagsCanonical
+				dstRow.Timestamp = srcRow.Timestamp
+
+				for j := range cs {
+					if cs[j].isTime {
+						dstRow.Timestamp = br.getTimestamps()[rowIdx]
+						continue
+					}
+
+					name := cs[j].name
+					value := cs[j].getValueAtRow(br, rowIdx)
+					if value == "" {
+						continue
+					}
+					dstRow.Fields = append(dstRow.Fields, Field{
+						Name:  name,
+						Value: value,
+					})
+				}
+
+				dst.MustAddInsertRow(dstRow)
+			}
+		}
+		noop := newNoopPipeProcessor(stopCh, writeFinalBlock)
+
+		// Initialize pipe processors.
+		procChain := noop
+		for i := len(q.pipes) - 1; i >= 0; i-- {
+			p := q.pipes[i]
+			cancel := func() {
+				panic(fmt.Errorf("BUG: pipe %T was canceled", p))
+			}
+			const concurrency = 1
+			proc := p.newPipeProcessor(concurrency, stopCh, cancel, procChain)
+			procChain = proc
+		}
+
+		// Evaluate the pipes.
+		procChain.writeBlock(0, br)
+	})
 }
 
 func getFieldNameFromPipes(pipes []pipe) (string, error) {
