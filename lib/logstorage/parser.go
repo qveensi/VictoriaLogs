@@ -35,6 +35,10 @@ type lexer struct {
 	// rawToken contains raw token before unquoting
 	rawToken string
 
+	// tokenStart and tokenEnd contain positions of rawToken in sOrig.
+	tokenStart int
+	tokenEnd   int
+
 	// prevRawToken contains the previously parsed token before unquoting
 	prevRawToken string
 
@@ -48,15 +52,105 @@ type lexer struct {
 
 	// opts is a stack of options for nested parsed queries
 	optss []*queryOptions
+
+	result *ParseResult
 }
 
 type lexerState struct {
 	lex lexer
 }
 
+type ParseStatus uint8
+
+const (
+	ParseStatusValid ParseStatus = iota
+	ParseStatusIncompleteAtCursor
+	ParseStatusInvalidBeforeCursor
+	ParseStatusInvalidAfterCursor
+	ParseStatusInvalidCrossingCursor
+)
+
+func (ps ParseStatus) String() string {
+	switch ps {
+	case ParseStatusValid:
+		return "valid"
+	case ParseStatusIncompleteAtCursor:
+		return "incomplete_at_cursor"
+	case ParseStatusInvalidBeforeCursor:
+		return "invalid_before_cursor"
+	case ParseStatusInvalidAfterCursor:
+		return "invalid_after_cursor"
+	case ParseStatusInvalidCrossingCursor:
+		return "invalid_crossing_cursor"
+	default:
+		return "unknown"
+	}
+}
+
+type ParseContext string
+
+const (
+	ParseContextQuery     ParseContext = "query"
+	ParseContextPipe      ParseContext = "pipe"
+	ParseContextPipeName  ParseContext = "pipe_name"
+	ParseContextStatsFunc ParseContext = "stats_func"
+	ParseContextField     ParseContext = "field"
+)
+
+type ParseResult struct {
+	Query   *Query
+	Err     error
+	Status  ParseStatus
+	Context ParseContext
+	Reason  ParseIncompleteReason
+
+	cursor int
+	errPos int
+}
+
+type ParseIncompleteReason uint8
+
+const (
+	ParseIncompleteNone ParseIncompleteReason = iota
+	ParseIncompleteMissingToken
+	ParseIncompletePartialToken
+	ParseIncompleteEmptySlot
+)
+
+func (pir ParseIncompleteReason) String() string {
+	switch pir {
+	case ParseIncompleteNone:
+		return ""
+	case ParseIncompleteMissingToken:
+		return "missing_token"
+	case ParseIncompletePartialToken:
+		return "partial_token"
+	case ParseIncompleteEmptySlot:
+		return "empty_slot"
+	default:
+		return "unknown"
+	}
+}
+
+func newParseResult(cursor int) *ParseResult {
+	return &ParseResult{
+		cursor: cursor,
+		errPos: -1,
+	}
+}
+
+func cloneParseResult(src *ParseResult) *ParseResult {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	return &dst
+}
+
 func (lex *lexer) copyFrom(src *lexer) {
 	*lex = *src
 	lex.optss = append(lex.optss[:0:0], src.optss...)
+	lex.result = cloneParseResult(src.result)
 }
 
 func (lex *lexer) backupState() *lexerState {
@@ -84,19 +178,146 @@ func (lex *lexer) getQueryOptions() *queryOptions {
 	return lex.optss[len(lex.optss)-1]
 }
 
+func (lex *lexer) setCursorContext(context ParseContext) {
+	result := lex.result
+	if result == nil {
+		return
+	}
+	if result.cursor < lex.tokenStart {
+		return
+	}
+	result.Context = context
+}
+
+func (lex *lexer) setCursorContextAtCurrentToken(context ParseContext) {
+	result := lex.result
+	if result == nil {
+		return
+	}
+	if lex.token == "" {
+		return
+	}
+	if result.cursor < lex.tokenStart || result.cursor > lex.tokenEnd {
+		return
+	}
+	result.Context = context
+}
+
+func (lex *lexer) setCursorIncomplete(context ParseContext, reason ParseIncompleteReason) {
+	result := lex.result
+	if result == nil {
+		return
+	}
+	if result.cursor < lex.tokenStart {
+		return
+	}
+	result.Context = context
+	result.Reason = reason
+}
+
+func (lex *lexer) setParseError(err error) {
+	result := lex.result
+	if result == nil || err == nil || result.Err != nil {
+		return
+	}
+	result.Err = err
+	result.errPos = lex.tokenStart
+	setIncompleteReasonAtCursor(result, lex)
+}
+
+func setIncompleteReasonAtCursor(result *ParseResult, lex *lexer) {
+	if result.Reason != ParseIncompleteNone {
+		return
+	}
+	if lex.tokenStart >= result.cursor {
+		if result.Context == ParseContextField {
+			if lex.isKeyword(")") {
+				result.Reason = ParseIncompleteEmptySlot
+			} else {
+				result.Reason = ParseIncompleteMissingToken
+			}
+		}
+		return
+	}
+	if result.cursor < lex.tokenStart || result.cursor > lex.tokenEnd {
+		return
+	}
+	switch result.Context {
+	case ParseContextPipeName:
+		if isPipeNamePrefix(strings.ToLower(lex.token)) {
+			result.Reason = ParseIncompletePartialToken
+		}
+	case ParseContextStatsFunc:
+		if isStatsFuncNamePrefix(strings.ToLower(lex.token)) {
+			result.Reason = ParseIncompletePartialToken
+		}
+	}
+}
+
 // newLexer returns new lexer for the given s at the given timestamp.
 //
 // The timestamp is used for properly parsing relative timestamps such as _time:1d.
 //
 // The lex.token points to the first token in s.
 func newLexer(s string, timestamp int64) *lexer {
+	return newLexerExt(s, timestamp, nil)
+}
+
+func newLexerExt(s string, timestamp int64, result *ParseResult) *lexer {
 	lex := &lexer{
 		s:                s,
 		sOrig:            s,
 		currentTimestamp: timestamp,
+		result:           result,
 	}
 	lex.nextToken()
 	return lex
+}
+
+func parseQueryResult(s string, timestamp int64, cursor int) *ParseResult {
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(s) {
+		cursor = len(s)
+	}
+
+	result := newParseResult(cursor)
+	lex := newLexerExt(s, timestamp, result)
+	q, err := parseQuery(lex)
+	if err == nil && !lex.isEnd() {
+		prefix := s
+		if q != nil {
+			prefix = q.String()
+		}
+		err = newUnexpectedTailError(prefix, lex)
+	}
+	lex.setParseError(err)
+	result = lex.result
+
+	result.Query = q
+	result.Err = err
+	result.Status = ParseStatusValid
+	if err != nil {
+		result.Status = getParseStatus(result)
+	}
+	return result
+}
+
+func getParseStatus(result *ParseResult) ParseStatus {
+	if result == nil || result.Err == nil {
+		return ParseStatusValid
+	}
+	if result.Reason != ParseIncompleteNone && result.Context != "" {
+		return ParseStatusIncompleteAtCursor
+	}
+	if result.errPos > result.cursor {
+		return ParseStatusInvalidAfterCursor
+	}
+	if result.errPos >= 0 && result.cursor >= result.errPos {
+		return ParseStatusInvalidCrossingCursor
+	}
+	return ParseStatusInvalidBeforeCursor
 }
 
 func (lex *lexer) isEnd() bool {
@@ -248,9 +469,12 @@ func (lex *lexer) context() string {
 }
 
 func (lex *lexer) nextCharToken(s string, size int) {
+	tokenStart := len(lex.sOrig) - len(s)
 	lex.token = s[:size]
 	lex.rawToken = lex.token
 	lex.s = s[size:]
+	lex.tokenStart = tokenStart
+	lex.tokenEnd = tokenStart + size
 }
 
 // nextToken updates lex.token to the next token.
@@ -259,6 +483,8 @@ func (lex *lexer) nextToken() {
 	lex.prevRawToken = lex.rawToken
 	lex.token = ""
 	lex.rawToken = ""
+	lex.tokenStart = len(lex.sOrig)
+	lex.tokenEnd = len(lex.sOrig)
 	lex.isSkippedSpace = false
 
 	if len(s) == 0 {
@@ -316,9 +542,12 @@ again:
 		lex.token = token
 		lex.rawToken = prefix
 		lex.s = s[len(prefix):]
+		lex.tokenStart = len(lex.sOrig) - len(s)
+		lex.tokenEnd = lex.tokenStart + len(prefix)
 		return
 	case '\'':
 		var b []byte
+		tokenStart := len(lex.sOrig) - len(s)
 		for !strings.HasPrefix(s[size:], "'") {
 			ch, _, newTail, err := strconv.UnquoteChar(s[size:], '\'')
 			if err != nil {
@@ -332,6 +561,8 @@ again:
 		lex.token = string(b)
 		lex.rawToken = string(s[:size])
 		lex.s = s[size:]
+		lex.tokenStart = tokenStart
+		lex.tokenEnd = tokenStart + size
 		return
 	case '=':
 		if strings.HasPrefix(s[size:], "~") {
@@ -1820,18 +2051,21 @@ func (q *Query) HasGlobalTimeFilter() bool {
 // E.g. _time:duration filters are adjusted according to the provided timestamp as _time:[timestamp-duration, duration].
 func ParseQueryAtTimestamp(s string, timestamp int64) (*Query, error) {
 	lex := newLexer(s, timestamp)
-
 	q, err := parseQuery(lex)
 	if err != nil {
 		return nil, err
 	}
 	if !lex.isEnd() {
-		return nil, fmt.Errorf("unexpected unparsed tail after [%s]; context: [%s]; tail: [%s]", q, lex.context(), lex.rawToken+lex.s)
+		return nil, newUnexpectedTailError(q.String(), lex)
 	}
 	q.optimize()
 	q.initStatsRateFuncsFromTimeFilter()
 
 	return q, nil
+}
+
+func newUnexpectedTailError(prefix string, lex *lexer) error {
+	return fmt.Errorf("unexpected unparsed tail after [%s]; context: [%s]; tail: [%s]", prefix, lex.context(), lex.rawToken+lex.s)
 }
 
 func (q *Query) initStatsRateFuncsFromTimeFilter() {
@@ -1901,6 +2135,7 @@ func parseQueryInParens(lex *lexer) (*Query, error) {
 }
 
 func parseQuery(lex *lexer) (*Query, error) {
+	lex.setCursorContext(ParseContextQuery)
 	var q Query
 	if err := parseQueryOptions(&q.opts, lex); err != nil {
 		return nil, fmt.Errorf("cannot parse query options: %w; context: [%s]; see https://docs.victoriametrics.com/victorialogs/logsql/#query-options", err, lex.context())

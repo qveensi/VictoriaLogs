@@ -287,6 +287,11 @@ func processSelectRequest(ctx context.Context, w http.ResponseWriter, r *http.Re
 	httpserver.EnableCORS(w, r)
 	startTime := time.Now()
 	switch path {
+	case "/select/logsql/query_autocomplete":
+		logsqlQueryAutocompleteRequests.Inc()
+		logsql.ProcessQueryAutocompleteRequest(ctx, w, r)
+		logsqlQueryAutocompleteDuration.UpdateDuration(startTime)
+		return true
 	case "/select/logsql/query_time_range":
 		logsqlQueryTimeRangeRequests.Inc()
 		logsql.ProcessQueryTimeRangeRequest(ctx, w, r)
@@ -449,6 +454,9 @@ func getMaxQueryDuration(r *http.Request) (time.Duration, error) {
 }
 
 var (
+	logsqlQueryAutocompleteRequests = metrics.NewCounter(`vl_http_requests_total{path="/select/logsql/query_autocomplete"}`)
+	logsqlQueryAutocompleteDuration = metrics.NewSummary(`vl_http_request_duration_seconds{path="/select/logsql/query_autocomplete"}`)
+
 	logsqlFacetsRequests = metrics.NewCounter(`vl_http_requests_total{path="/select/logsql/facets"}`)
 	logsqlFacetsDuration = metrics.NewSummary(`vl_http_request_duration_seconds{path="/select/logsql/facets"}`)
 

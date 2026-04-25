@@ -70,6 +70,49 @@ func ProcessQueryTimeRangeRequest(ctx context.Context, w http.ResponseWriter, r 
 	fmt.Fprintf(w, `{"start":%q,"end":%q,"hasTimeFilter":%t}`, startStr, endStr, hasTimeFilter)
 }
 
+// ProcessQueryAutocompleteRequest handles /select/logsql/query_autocomplete request.
+func ProcessQueryAutocompleteRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	_ = ctx
+
+	cursor, err := getPositiveInt(r, "cursor")
+	if err != nil {
+		httpserver.Errorf(w, r, "%s", err)
+		return
+	}
+
+	qStr := r.FormValue("query")
+	if len(qStr) > maxQueryLen.IntN() {
+		httpserver.Errorf(w, r, "the `query` arg length cannot exceed -search.maxQueryLen=%d bytes; the current query length is %d bytes; query=%s", maxQueryLen.IntN(), len(qStr), qStr)
+		return
+	}
+
+	ac := logstorage.GetQueryAutocomplete(qStr, time.Now().UnixNano(), cursor)
+
+	resp := struct {
+		IsBlocked bool   `json:"isBlocked"`
+		Status    string `json:"status"`
+		Context   string `json:"context"`
+		Reason    string `json:"reason,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}{
+		IsBlocked: ac.Blocked,
+		Status:    ac.Status.String(),
+		Context:   string(ac.Context),
+		Reason:    ac.Reason.String(),
+	}
+	if ac.Err != nil {
+		resp.Error = ac.Err.Error()
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.Panicf("BUG: cannot marshal autocomplete response: %s", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "%s", data)
+}
+
 func parseQueryTimeRangeArgs(r *http.Request) (int64, int64, bool, error) {
 	currTimestamp := time.Now().UnixNano()
 	q, err := parseQueryFromRequest(r, currTimestamp)

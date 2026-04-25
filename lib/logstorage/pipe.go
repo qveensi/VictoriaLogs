@@ -115,6 +115,7 @@ func (npp *noopPipeProcessor) flush() error {
 func parsePipes(lex *lexer) ([]pipe, error) {
 	var pipes []pipe
 	for {
+		lex.setCursorContext(ParseContextPipe)
 		p, err := parsePipe(lex)
 		if err != nil {
 			return nil, err
@@ -133,6 +134,7 @@ func parsePipes(lex *lexer) ([]pipe, error) {
 }
 
 func parsePipe(lex *lexer) (pipe, error) {
+	lex.setCursorContextAtCurrentToken(ParseContextPipeName)
 	pps := getPipeParsers()
 	for pipeName, parseFunc := range pps {
 		if !lex.isKeyword(pipeName) {
@@ -152,6 +154,9 @@ func parsePipe(lex *lexer) (pipe, error) {
 	if err == nil {
 		return ps, nil
 	}
+	if lex.result != nil && (lex.result.Reason != ParseIncompleteNone || (lex.result.Context != "" && lex.result.Context != ParseContextPipe && lex.result.Context != ParseContextPipeName)) {
+		return nil, err
+	}
 	lex.restoreState(lexState)
 
 	// Try parsing filter pipe without 'filter' keyword
@@ -161,6 +166,9 @@ func parsePipe(lex *lexer) (pipe, error) {
 	}
 	lex.restoreState(lexState)
 
+	if lex.isKeyword("") {
+		lex.setCursorIncomplete(ParseContextPipe, ParseIncompleteMissingToken)
+	}
 	return nil, fmt.Errorf("unexpected pipe %q", lex.token)
 }
 
@@ -243,6 +251,15 @@ func isPipeName(s string) bool {
 	pps := getPipeParsers()
 	sLower := strings.ToLower(s)
 	return pps[sLower] != nil
+}
+
+func isPipeNamePrefix(s string) bool {
+	for pipeName := range getPipeParsers() {
+		if strings.HasPrefix(pipeName, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func mustParsePipes(s string, timestamp int64) []pipe {

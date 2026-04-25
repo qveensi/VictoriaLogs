@@ -1535,6 +1535,9 @@ func parseStatsSwitch(lex *lexer, sf statsFunc) (*pipeStatsSwitch, error) {
 }
 
 func parseStatsFunc(lex *lexer) (statsFunc, error) {
+	if !isPipeNamePrefix(strings.ToLower(lex.token)) {
+		lex.setCursorContextAtCurrentToken(ParseContextStatsFunc)
+	}
 	sps := getStatsFuncParsers()
 	for funcName, parserFunc := range sps {
 		if !lex.isKeyword(funcName) {
@@ -1592,6 +1595,15 @@ func isStatsFuncName(s string) bool {
 	sps := getStatsFuncParsers()
 	sLower := strings.ToLower(s)
 	return sps[sLower] != nil
+}
+
+func isStatsFuncNamePrefix(s string) bool {
+	for funcName := range getStatsFuncParsers() {
+		if strings.HasPrefix(funcName, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // byStatsField represents 'by (...)' part of the pipeStats.
@@ -1789,6 +1801,10 @@ func parseFieldFiltersInParens(lex *lexer) ([]string, error) {
 	var fields []string
 	for {
 		lex.nextToken()
+		lex.setCursorContext(ParseContextField)
+		if lex.isKeyword(")") || lex.isKeyword("") {
+			lex.setCursorIncomplete(ParseContextField, ParseIncompleteMissingToken)
+		}
 		if lex.isKeyword(")") {
 			lex.nextToken()
 			return fields, nil
