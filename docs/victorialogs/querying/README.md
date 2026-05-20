@@ -144,6 +144,7 @@ with [`vl_http_requests_total{path="/select/logsql/query"}`](https://docs.victor
 The `/select/logsql/query` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -356,6 +357,7 @@ curl http://localhost:9428/select/logsql/hits -H 'AccountID: 12' -H 'ProjectID: 
 The `/select/logsql/hits` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -457,6 +459,7 @@ curl http://localhost:9428/select/logsql/facets -d 'query=_time:1h' -d 'keep_con
 The `/select/logsql/facets` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -539,6 +542,7 @@ It is used by [vmalert](https://docs.victoriametrics.com/victorialogs/vmalert/).
 The `/select/logsql/stats_query` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -656,6 +660,7 @@ It is used by [Grafana plugin for VictoriaLogs](https://docs.victoriametrics.com
 The `/select/logsql/stats_query_range` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -722,6 +727,7 @@ curl http://localhost:9428/select/logsql/stream_ids -H 'AccountID: 12' -H 'Proje
 The `/select/logsql/stream_ids` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -787,6 +793,7 @@ curl http://localhost:9428/select/logsql/streams -H 'AccountID: 12' -H 'ProjectI
 The `/select/logsql/streams` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -851,6 +858,7 @@ curl http://localhost:9428/select/logsql/stream_field_names -H 'AccountID: 12' -
 The `/select/logsql/stream_field_names` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -914,6 +922,7 @@ curl http://localhost:9428/select/logsql/stream_field_values -H 'AccountID: 12' 
 The `/select/logsql/stream_field_values` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -997,6 +1006,7 @@ curl http://localhost:9428/select/logsql/field_names -H 'AccountID: 12' -H 'Proj
 The `/select/logsql/field_names` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
@@ -1065,6 +1075,7 @@ curl http://localhost:9428/select/logsql/field_values -H 'AccountID: 12' -H 'Pro
 The `/select/logsql/field_values` returns the following additional HTTP response headers:
 
 - `VL-Request-Duration-Seconds` - the duration of the query until the first response byte.
+- `VL-Partial-Response` - indicates whether the response is complete (`false`), [partial](https://docs.victoriametrics.com/victorialogs/querying/#partial-responses) due to unavailable storage nodes (`true`), or cannot be determined, e.g., for unbuffered streaming queries (`unknown`).
 - `AccountID` and `ProjectID` - the requested [tenant](https://docs.victoriametrics.com/victorialogs/#multitenancy).
 
 See also:
